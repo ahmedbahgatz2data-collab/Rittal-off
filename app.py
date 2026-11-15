@@ -1,10 +1,68 @@
 import asyncio
 import os
 import time
-import threading
+import multiprocessing
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pyppeteer import launch
+
+# دالة التحميل التي تعمل في عملية منفصلة (Process)
+def run_process_worker(hhh, save_path, page_format, result_file):
+    # إنشاء حدث غير متزامن داخل العملية المستقلة
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        loop.run_until_complete(async_main_download(hhh, save_path, page_format, result_file))
+    finally:
+        loop.close()
+
+async def async_main_download(hhh, save_path, page_format, result_file):
+    for h in range(len(hhh)):
+        url = hhh[h]
+        try:
+            await accept_cookies(url, h + 1, save_path, page_format, result_file)
+        except Exception as e:
+            current_time = time.strftime("%H-%M-%S")
+            with open(result_file, "a", encoding="utf-8") as file2:
+                file2.write(f"{url}\tError: {str(e)}\t{current_time}\n")
+
+async def accept_cookies(url, index, save_path, page_format, result_file):
+    # تحديد مسار Google Chrome المثبت على الجهاز تلقائياً
+    chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    if not os.path.exists(chrome_path):
+        chrome_path = r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+
+    launch_args = {'headless': True}
+    if os.path.exists(chrome_path):
+        launch_args['executablePath'] = chrome_path
+
+    browser = await launch(**launch_args)
+    page = await browser.newPage()
+    
+    await page.goto(url, {'timeout': 30000, 'waitUntil': 'networkidle2'})
+    await page.waitForSelector('#swal2-html-container > div > div > div.cc-body > div.row > div > div > button.custom-button.--primary')
+    
+    accept_button = await page.querySelector('#swal2-html-container > div > div > div.cc-body > div.row > div > div > button.custom-button.--primary')
+    await asyncio.sleep(0.1)
+    await accept_button.click()
+    await asyncio.sleep(0.1)
+    
+    await page.emulateMedia('screen')
+    current_time = time.strftime("%H-%M-%S")
+    file_name = f"File_{current_time}_{index}.pdf"
+    
+    await page.pdf({
+        'path': f"{save_path}{file_name}",
+        'printBackground': True,
+        'format': page_format
+    })
+    
+    with open(result_file, "a", encoding="utf-8") as file2:
+        file2.write(f"{url}\t{file_name}\t{current_time}\n")
+
+    await browser.close()
+
 
 class RittalDownloaderApp:
     def __init__(self, root):
@@ -16,11 +74,11 @@ class RittalDownloaderApp:
         # المتغيرات
         self.path_var = tk.StringVar(value=os.getcwd())
         self.format_var = tk.StringVar(value="A4")
+        self.worker_process = None
 
         self.create_widgets()
 
     def create_widgets(self):
-        # عنوان رئيسي
         title_label = tk.Label(self.root, text="Rittal PDF Downloader - GUI", font=("Arial", 14, "bold"))
         title_label.pack(pady=15)
 
@@ -43,7 +101,7 @@ class RittalDownloaderApp:
         format_menu.pack(side="right", padx=5)
 
         # زر البدء
-        self.btn_start = tk.Button(self.root, text="بدء التحميل", bg="green", fg="white", font=("Arial", 12, "bold"), command=self.start_thread, width=20, height=2)
+        self.btn_start = tk.Button(self.root, text="بدء التحميل", bg="green", fg="white", font=("Arial", 12, "bold"), command=self.start_process, width=20, height=2)
         self.btn_start.pack(pady=20)
 
         # شريط التقدم وحالة العمل
@@ -58,11 +116,7 @@ class RittalDownloaderApp:
         if dir_selected:
             self.path_var.set(dir_selected)
 
-    def start_thread(self):
-        # تشغيل العملية في خلفية منفصلة لكي لا تتجمد واجهة المستخدم
-        threading.Thread(target=self.run_process, daemon=True).start()
-
-    def run_process(self):
+    def start_process(self):
         p = self.path_var.get()
         if p and p[-1] != "\\":
             p = p + "\\"
@@ -84,77 +138,39 @@ class RittalDownloaderApp:
 
         self.btn_start.config(state="disabled")
         self.progress["maximum"] = len(hhh)
-        self.progress["value"] = 0
+        self.progress["value"] = len(hhh) # مؤشر اكتمال شكلي أو يمكن جعله غير محدد
 
         # إنشاء ملف النتائج
         with open(result_file, "w", encoding="utf-8") as f:
             f.write("Link\tFile Name\tTime\n")
 
-        for h in range(len(hhh)):
-            url = hhh[h]
-            self.progress_label.config(text=f"جاري معالجة الرابط {h+1} من {len(hhh)}...")
-            
-            # إنشاء حدث جديد ومنع مشكلة الـ Signals في الثريد الجانبي
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                # تجاوز خطأ الـ Signals في الثريد الفرعي
-                loop.add_signal_handler = lambda *args, **kwargs: None
-            except NotImplementedError:
-                pass
+        self.progress_label.config(text="جاري التحميل في عملية منفصلة...")
 
-            try:
-                loop.run_until_complete(self.accept_cookies(url, h + 1, p, page_format, result_file))
-            except Exception as e:
-                current_time = time.strftime("%H-%M-%S")
-                with open(result_file, "a", encoding="utf-8") as file2:
-                    file2.write(f"{url}\tError: {str(e)}\t{current_time}\n")
-            finally:
-                loop.close()
-            
-            self.progress["value"] = h + 1
+        # تشغيل التحميل عبر Process مستقلة تماماً لتجنب مشاكل الـ Signal والثريدز
+        self.worker_process = multiprocessing.Process(
+            target=run_process_worker,
+            args=(hhh, p, page_format, result_file)
+        )
+        self.worker_process.start()
 
-        self.progress_label.config(text="اكتمل التحميل بنجاح!")
-        self.btn_start.config(state="normal")
-        messagebox.showinfo("تم", "تم الانتهاء من تحميل جميع الروابط بنجاح!")
+        # مراقبة انتهاء العملية في الخلفية دون تجميد الواجهة
+        self.root.after(100, self.check_process)
 
-    async def accept_cookies(self, url, index, save_path, page_format, result_file):
-        # تحديد مسار Google Chrome المثبت على الجهاز تلقائياً
-        chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-        if not os.path.exists(chrome_path):
-            chrome_path = r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+    def check_process(self):
+        if self.worker_process and self.worker_process.is_alive():
+            # العملية لا تزال تعمل، تحقق مرة أخرى بعد نصف ثانية
+            self.root.after(500, self.check_process)
+        else:
+            # انتهت العملية بنجاح
+            self.progress_label.config(text="اكتمل التحميل بنجاح!")
+            self.btn_start.config(state="normal")
+            messagebox.showinfo("تم", "تم الانتهاء من تحميل جميع الروابط بنجاح!")
 
-        launch_args = {'headless': True}
-        if os.path.exists(chrome_path):
-            launch_args['executablePath'] = chrome_path
-
-        browser = await launch(**launch_args)
-        page = await browser.newPage()
-        
-        await page.goto(url, {'timeout': 30000, 'waitUntil': 'networkidle2'})
-        await page.waitForSelector('#swal2-html-container > div > div > div.cc-body > div.row > div > div > button.custom-button.--primary')
-        
-        accept_button = await page.querySelector('#swal2-html-container > div > div > div.cc-body > div.row > div > div > button.custom-button.--primary')
-        await asyncio.sleep(0.1)
-        await accept_button.click()
-        await asyncio.sleep(0.1)
-        
-        await page.emulateMedia('screen')
-        current_time = time.strftime("%H-%M-%S")
-        file_name = f"File_{current_time}_{index}.pdf"
-        
-        await page.pdf({
-            'path': f"{save_path}{file_name}",
-            'printBackground': True,
-            'format': page_format
-        })
-        
-        with open(result_file, "a", encoding="utf-8") as file2:
-            file2.write(f"{url}\t{file_name}\t{current_time}\n")
-
-        await browser.close()
 
 if __name__ == "__main__":
+    # ضروري جداً لضمان عمل الـ Multiprocessing بشكل صحيح مع ملفات الـ .exe
+    multiprocessing.freeze_support()
+    
     root = tk.Tk()
     app = RittalDownloaderApp(root)
     root.mainloop()
