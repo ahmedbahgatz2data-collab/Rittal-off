@@ -94,14 +94,19 @@ class RittalDownloaderApp:
             url = hhh[h]
             self.progress_label.config(text=f"جاري معالجة الرابط {h+1} من {len(hhh)}...")
             
-            # إنشاء حدث منفصل لتجنب أخطاء الـ Signals في الثريد الجانبي
+            # إنشاء حدث جديد ومنع مشكلة الـ Signals في الثريد الجانبي
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            try:
+                # تجاوز خطأ الـ Signals في الثريد الفرعي
+                loop.add_signal_handler = lambda *args, **kwargs: None
+            except NotImplementedError:
+                pass
+
             try:
                 loop.run_until_complete(self.accept_cookies(url, h + 1, p, page_format, result_file))
             except Exception as e:
                 current_time = time.strftime("%H-%M-%S")
-                # تسجيل الخطأ الفعلي بوضوح داخل ملف الـ txt
                 with open(result_file, "a", encoding="utf-8") as file2:
                     file2.write(f"{url}\tError: {str(e)}\t{current_time}\n")
             finally:
