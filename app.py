@@ -97,8 +97,9 @@ class RittalDownloaderApp:
                 asyncio.run(self.accept_cookies(url, h + 1, p, page_format, result_file))
             except Exception as e:
                 current_time = time.strftime("%H-%M-%S")
+                # تسجيل الخطأ الفعلي لتسهيل معرفة السبب في ملف الـ txt
                 with open(result_file, "a", encoding="utf-8") as file2:
-                    file2.write(f"{url}\tError\t{current_time}\n")
+                    file2.write(f"{url}\tError: {str(e)}\t{current_time}\n")
             
             self.progress["value"] = h + 1
 
@@ -107,7 +108,16 @@ class RittalDownloaderApp:
         messagebox.showinfo("تم", "تم الانتهاء من تحميل جميع الروابط بنجاح!")
 
     async def accept_cookies(self, url, index, save_path, page_format, result_file):
-        browser = await launch(headless=True)
+        # محاولة تحديد مسار الكروم المثبت على ويندوز تلقائياً
+        chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        if not os.path.exists(chrome_path):
+            chrome_path = r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+
+        launch_args = {'headless': True}
+        if os.path.exists(chrome_path):
+            launch_args['executablePath'] = chrome_path
+
+        browser = await launch(**launch_args)
         page = await browser.newPage()
         
         await page.goto(url, {'timeout': 30000, 'waitUntil': 'networkidle2'})
