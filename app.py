@@ -93,13 +93,19 @@ class RittalDownloaderApp:
         for h in range(len(hhh)):
             url = hhh[h]
             self.progress_label.config(text=f"جاري معالجة الرابط {h+1} من {len(hhh)}...")
+            
+            # إنشاء حدث منفصل لتجنب أخطاء الـ Signals في الثريد الجانبي
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             try:
-                asyncio.run(self.accept_cookies(url, h + 1, p, page_format, result_file))
+                loop.run_until_complete(self.accept_cookies(url, h + 1, p, page_format, result_file))
             except Exception as e:
                 current_time = time.strftime("%H-%M-%S")
-                # تسجيل الخطأ الفعلي لتسهيل معرفة السبب في ملف الـ txt
+                # تسجيل الخطأ الفعلي بوضوح داخل ملف الـ txt
                 with open(result_file, "a", encoding="utf-8") as file2:
                     file2.write(f"{url}\tError: {str(e)}\t{current_time}\n")
+            finally:
+                loop.close()
             
             self.progress["value"] = h + 1
 
@@ -108,7 +114,7 @@ class RittalDownloaderApp:
         messagebox.showinfo("تم", "تم الانتهاء من تحميل جميع الروابط بنجاح!")
 
     async def accept_cookies(self, url, index, save_path, page_format, result_file):
-        # محاولة تحديد مسار الكروم المثبت على ويندوز تلقائياً
+        # تحديد مسار Google Chrome المثبت على الجهاز تلقائياً
         chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         if not os.path.exists(chrome_path):
             chrome_path = r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
